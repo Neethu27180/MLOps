@@ -67,7 +67,7 @@ y_test.to_csv('tourism_project/data_registration/y_test.csv', index=False)
 
 # Upload data to Hugging Face (using the HF_TOKEN secret from GitHub Actions)
 # Replace with your Hugging Face username and dataset name
-repo_id = 'Neethu2718/Visit_with_us' # Replace with your actual repo ID
+repo_id = 'Neethu2718/MLOps' # Updated repo_id
 
 api = HfApi(token=os.environ['HF_TOKEN']) # Use environment variable in GitHub Actions
 
@@ -120,7 +120,7 @@ import os
 # Define the paths to the data and the model
 local_data_path = 'tourism_project/data_registration'
 local_model_path = 'tourism_project/model_building/logistic_regression_model.joblib'
-repo_id = 'Neethu2718/Visit_with_us' # Replace with your actual repo ID
+repo_id = 'Neethu2718/MLOps' # Updated repo_id
 
 # Load data from local files (downloaded in previous step)
 try:
