@@ -30,180 +30,18 @@ jobs:
 
     - name: Run Data Preparation
       run: |
-        python -c "
-import pandas as pd
-from sklearn.model_selection import train_test_split
-from huggingface_hub import HfApi
-import os
-
-# Create the data_registration directory if it doesn't exist
-os.makedirs('tourism_project/data_registration', exist_ok=True)
-
-# Load data (assuming tourism.csv is already in the repo or can be downloaded)
-# For now, let's assume it's in the repo at tourism_project/data_registration
-try:
-    df = pd.read_csv('tourism_project/data_registration/tourism.csv')
-except FileNotFoundError:
-    print('tourism.csv not found. Please ensure it is in the tourism_project/data_registration directory in the repo.')
-    exit(1)
-
-# Remove duplicate rows
-df.drop_duplicates(inplace=True)
-
-# Remove unnecessary columns
-irrelevant_columns = ['Unnamed: 0', 'CustomerID']
-df = df.drop(columns=irrelevant_columns)
-
-# Split data
-X = df.drop('ProdTaken', axis=1)
-y = df['ProdTaken']
-X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
-
-# Save data locally
-X_train.to_csv('tourism_project/data_registration/X_train.csv', index=False)
-X_test.to_csv('tourism_project/data_registration/X_test.csv', index=False)
-y_train.to_csv('tourism_project/data_registration/y_train.csv', index=False)
-y_test.to_csv('tourism_project/data_registration/y_test.csv', index=False)
-
-# Upload data to Hugging Face (using the HF_TOKEN secret from GitHub Actions)
-# Replace with your Hugging Face username and dataset name
-repo_id = 'Neethu2718/MLOps' # Updated repo_id
-
-api = HfApi(token=os.environ['HF_TOKEN']) # Use environment variable in GitHub Actions
-
-api.upload_file(
-    path_or_fileobj='tourism_project/data_registration/X_train.csv',
-    path_in_repo='X_train.csv',
-    repo_id=repo_id,
-    repo_type='space',
-)
-
-api.upload_file(
-    path_or_fileobj='tourism_project/data_registration/X_test.csv',
-    path_in_repo='X_test.csv',
-    repo_id=repo_id,
-    repo_type='space',
-)
-
-api.upload_file(
-    path_or_fileobj='tourism_project/data_registration/y_train.csv',
-    path_in_repo='y_train.csv',
-    repo_id=repo_id,
-    repo_type='space',
-)
-
-api.upload_file(
-    path_or_fileobj='tourism_project/data_registration/y_test.csv',
-    path_in_repo='y_test.csv',
-    repo_id=repo_id,
-    repo_type='space',
-)
-
-print('Data preparation and upload completed.')
-"
+        python tourism_project/data_registration/data_preparation.py
       env:
         HF_TOKEN: ${{ secrets.HF_TOKEN }}
+
 
     - name: Run Model Building and Evaluation
       run: |
-        python -c "
-import pandas as pd
-from sklearn.model_selection import train_test_split
-from sklearn.preprocessing import StandardScaler
-from sklearn.linear_model import LogisticRegression
-from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, roc_auc_score
-import mlflow
-import joblib
-from huggingface_hub import HfApi
-import os
-
-# Define the paths to the data and the model
-local_data_path = 'tourism_project/data_registration'
-local_model_path = 'tourism_project/model_building/logistic_regression_model.joblib'
-repo_id = 'Neethu2718/MLOps' # Updated repo_id
-
-# Load data from local files (downloaded in previous step)
-try:
-    X_train = pd.read_csv(f'{local_data_path}/X_train.csv')
-    X_test = pd.read_csv(f'{local_data_path}/X_test.csv')
-    y_train = pd.read_csv(f'{local_data_path}/y_train.csv')
-    y_test = pd.read_csv(f'{local_data_path}/y_test.csv')
-except FileNotFoundError:
-    print('Train/test data not found locally. Ensure the Data Preparation step ran successfully.')
-    exit(1)
-
-# Data preprocessing and transformation
-categorical_cols = X_train.select_dtypes(include=['object']).columns
-numerical_cols = X_train.select_dtypes(include=['float64', 'int64']).columns
-
-X_train = pd.get_dummies(X_train, columns=categorical_cols, drop_first=True)
-X_test = pd.get_dummies(X_test, columns=categorical_cols, drop_first=True)
-
-# Align columns after one-hot encoding
-train_cols = X_train.columns
-test_cols = X_test.columns
-missing_in_test = set(train_cols) - set(test_cols)
-for c in missing_in_test:
-    X_test[c] = 0
-missing_in_train = set(test_cols) - set(train_cols)
-for c in missing_in_train:
-    X_train[c] = 0
-X_test = X_test[train_cols]
-
-scaler = StandardScaler()
-X_train[numerical_cols] = scaler.fit_transform(X_train[numerical_cols])
-X_test[numerical_cols] = scaler.transform(X_test[numerical_cols])
-
-# Define and train model
-model = LogisticRegression(random_state=42, max_iter=5000)
-
-with mlflow.start_run(run_name='Logistic Regression Training'):
-    model.fit(X_train, y_train.values.ravel())
-
-    # Evaluate model
-    y_pred = model.predict(X_test)
-    accuracy = accuracy_score(y_test, y_pred)
-    precision = precision_score(y_test, y_pred)
-    recall = recall_score(y_test, y_pred)
-    f1 = f1_score(y_test, y_pred)
-    roc_auc = roc_auc_score(y_test, model.predict_proba(X_test)[:, 1])
-
-    # Log parameters and metrics
-    mlflow.log_param('solver', 'lbfgs')
-    mlflow.log_param('random_state', 42)
-    mlflow.log_param('max_iter', 5000)
-    mlflow.log_metric('accuracy', accuracy)
-    mlflow.log_metric('precision', precision)
-    mlflow.log_metric('recall', recall)
-    mlflow.log_metric('f1', f1)
-    mlflow.log_metric('roc_auc', roc_auc)
-
-    print('Model training and evaluation completed.')
-    print(f'Accuracy: {accuracy}')
-    print(f'Precision: {precision}')
-    print(f'Recall: {recall}')
-    print(f'F1-score: {f1}')
-    print(f'ROC AUC: {roc_auc}')
-
-    # Save the trained model locally
-    os.makedirs('tourism_project/model_building', exist_ok=True)
-    joblib.dump(model, local_model_path)
-    print(f'Model saved locally at {local_model_path}')
-
-    # Upload the saved model file to the Hugging Face Model Hub
-    api = HfApi(token=os.environ['HF_TOKEN']) # Use environment variable in GitHub Actions
-    api.upload_file(
-        path_or_fileobj=local_model_path,
-        path_in_repo='logistic_regression_model.joblib',
-        repo_id=repo_id,
-        repo_type='space',
-    )
-    print(f'Model uploaded to Hugging Face Model Hub: {repo_id}')
-
-"
+        python tourism_project/model_building/model_build_eval.py
       env:
         HF_TOKEN: ${{ secrets.HF_TOKEN }}
         MLFLOW_TRACKING_URI: file:///tmp/mlruns # Log MLflow artifacts locally in the runner
+
 
     - name: Upload MLflow artifacts
       uses: actions/upload-artifact@v4
@@ -221,3 +59,4 @@ with mlflow.start_run(run_name='Logistic Regression Training'):
         # No specific action needed here other than ensuring the files are in the repo
         # and will be picked up by the Hugging Face Space build process.
         echo "Deployment files are ready in the repository. Hugging Face Space will handle the build and deployment on push."
+
