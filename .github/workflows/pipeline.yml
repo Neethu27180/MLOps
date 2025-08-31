@@ -1,35 +1,112 @@
-name: ML Pipeline CI/CD
+
+name: MLOps Pipeline
 
 on:
   push:
     branches:
-      - main  # Trigger on pushes to the main branch
+      - main
 
 jobs:
   build-and-deploy:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+    - name: Checkout code
+      uses: actions/checkout@v4
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.9' # Use the Python version you developed with
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.9'
 
-      - name: Install dependencies
-        run: |
-          cd tourism_project
-          pip install -r requirements.txt
+    - name: Install dependencies
+      run: |
+        pip install -r tourism_project/model_deployment/requirements.txt
+        pip install mlflow huggingface_hub joblib pandas scikit-learn
 
-      - name: Execute Data Preparation and Model Training
-        run: |
-          cd tourism_project
-          # Assuming you have a script or notebook that runs these steps
-          # For this example, we'll simulate running the steps from the notebook
-          # In a real scenario, you would have dedicated Python scripts
-          python -c "
+    - name: Log in to Hugging Face Hub
+      run: |
+        echo "${{ secrets.HF_TOKEN }}" | huggingface-cli login --token-value-stdin
+
+    - name: Run Data Preparation
+      run: |
+        python -c "
+import pandas as pd
+from sklearn.model_selection import train_test_split
+from huggingface_hub import HfApi
+import os
+
+# Create the data_registration directory if it doesn't exist
+os.makedirs('tourism_project/data_registration', exist_ok=True)
+
+# Load data (assuming tourism.csv is already in the repo or can be downloaded)
+# For now, let's assume it's in the repo at tourism_project/data_registration
+try:
+    df = pd.read_csv('tourism_project/data_registration/tourism.csv')
+except FileNotFoundError:
+    print('tourism.csv not found. Please ensure it is in the tourism_project/data_registration directory in the repo.')
+    exit(1)
+
+# Remove duplicate rows
+df.drop_duplicates(inplace=True)
+
+# Remove unnecessary columns
+irrelevant_columns = ['Unnamed: 0', 'CustomerID']
+df = df.drop(columns=irrelevant_columns)
+
+# Split data
+X = df.drop('ProdTaken', axis=1)
+y = df['ProdTaken']
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+
+# Save data locally
+X_train.to_csv('tourism_project/data_registration/X_train.csv', index=False)
+X_test.to_csv('tourism_project/data_registration/X_test.csv', index=False)
+y_train.to_csv('tourism_project/data_registration/y_train.csv', index=False)
+y_test.to_csv('tourism_project/data_registration/y_test.csv', index=False)
+
+# Upload data to Hugging Face (using the HF_TOKEN secret from GitHub Actions)
+# Replace with your Hugging Face username and dataset name
+repo_id = 'Neethu2718/Visit_with_us' # Replace with your actual repo ID
+
+api = HfApi(token=os.environ['HF_TOKEN']) # Use environment variable in GitHub Actions
+
+api.upload_file(
+    path_or_fileobj='tourism_project/data_registration/X_train.csv',
+    path_in_repo='X_train.csv',
+    repo_id=repo_id,
+    repo_type='space',
+)
+
+api.upload_file(
+    path_or_fileobj='tourism_project/data_registration/X_test.csv',
+    path_in_repo='X_test.csv',
+    repo_id=repo_id,
+    repo_type='space',
+)
+
+api.upload_file(
+    path_or_fileobj='tourism_project/data_registration/y_train.csv',
+    path_in_repo='y_train.csv',
+    repo_id=repo_id,
+    repo_type='space',
+)
+
+api.upload_file(
+    path_or_fileobj='tourism_project/data_registration/y_test.csv',
+    path_in_repo='y_test.csv',
+    repo_id=repo_id,
+    repo_type='space',
+)
+
+print('Data preparation and upload completed.')
+"
+      env:
+        HF_TOKEN: ${{ secrets.HF_TOKEN }}
+
+    - name: Run Model Building and Evaluation
+      run: |
+        python -c "
 import pandas as pd
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
@@ -37,50 +114,32 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, roc_auc_score
 import mlflow
 import joblib
-from huggingface_hub import HfApi, hf_hub_download
+from huggingface_hub import HfApi
 import os
-from google.colab import userdata # Note: userdata won't work in GitHub Actions, replace with env variable
 
-# Use environment variable for HF_TOKEN in GitHub Actions
-hf_token = os.environ.get('HF_TOKEN')
-if not hf_token:
-    raise ValueError('HF_TOKEN environment variable not set.')
+# Define the paths to the data and the model
+local_data_path = 'tourism_project/data_registration'
+local_model_path = 'tourism_project/model_building/logistic_regression_model.joblib'
+repo_id = 'Neethu2718/Visit_with_us' # Replace with your actual repo ID
 
+# Load data from local files (downloaded in previous step)
+try:
+    X_train = pd.read_csv(f'{local_data_path}/X_train.csv')
+    X_test = pd.read_csv(f'{local_data_path}/X_test.csv')
+    y_train = pd.read_csv(f'{local_data_path}/y_train.csv')
+    y_test = pd.read_csv(f'{local_data_path}/y_test.csv')
+except FileNotFoundError:
+    print('Train/test data not found locally. Ensure the Data Preparation step ran successfully.')
+    exit(1)
 
-# --- Data Loading and Cleaning ---
-repo_id = 'Neethu2718/Visit_with_us'
-local_data_path = 'data_registration'
-os.makedirs(local_data_path, exist_ok=True)
-
-api = HfApi(token=hf_token)
-
-for filename in ['tourism.csv']: # Load the original data for cleaning
-    api.hf_hub_download(
-        repo_id=repo_id,
-        filename=filename,
-        repo_type='space',
-        local_dir=local_data_path,
-        local_dir_use_symlinks=False
-    )
-
-df = pd.read_csv(f'{local_data_path}/tourism.csv')
-
-# Data Cleaning (same as in notebook)
-irrelevant_columns = ['Unnamed: 0', 'CustomerID']
-df = df.drop(columns=irrelevant_columns)
-
-# --- Data Splitting ---
-X = df.drop('ProdTaken', axis=1)
-y = df['ProdTaken']
-X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
-
-# --- Data Preprocessing and Transformation ---
+# Data preprocessing and transformation
 categorical_cols = X_train.select_dtypes(include=['object']).columns
 numerical_cols = X_train.select_dtypes(include=['float64', 'int64']).columns
 
 X_train = pd.get_dummies(X_train, columns=categorical_cols, drop_first=True)
 X_test = pd.get_dummies(X_test, columns=categorical_cols, drop_first=True)
 
+# Align columns after one-hot encoding
 train_cols = X_train.columns
 test_cols = X_test.columns
 missing_in_test = set(train_cols) - set(test_cols)
@@ -95,86 +154,70 @@ scaler = StandardScaler()
 X_train[numerical_cols] = scaler.fit_transform(X_train[numerical_cols])
 X_test[numerical_cols] = scaler.transform(X_test[numerical_cols])
 
-# Save the scaler for later use in the app
-os.makedirs('model_building', exist_ok=True)
-joblib.dump(scaler, 'model_building/scaler.joblib')
+# Define and train model
+model = LogisticRegression(random_state=42, max_iter=5000)
 
-
-# --- Model Training ---
-model = LogisticRegression(random_state=42, max_iter=5000) # Increased max_iter
-model.fit(X_train, y_train.values.ravel())
-
-
-# --- Model Evaluation ---
-y_pred = model.predict(X_test)
-accuracy = accuracy_score(y_test, y_pred)
-precision = precision_score(y_test, y_pred)
-recall = recall_score(y_test, y_pred)
-f1 = f1_score(y_test, y_pred)
-roc_auc = roc_auc_score(y_test, model.predict_proba(X_test)[:, 1])
-
-print(f'Accuracy: {accuracy}')
-print(f'Precision: {precision}')
-print(f'Recall: {recall}')
-print(f'F1-score: {f1}')
-print(f'ROC AUC: {roc_auc}')
-
-
-# --- MLflow Logging ---
-# MLflow tracking URI can be set here if using a remote server
-# mlflow.set_tracking_uri('YOUR_MLFLOW_TRACKING_URI')
 with mlflow.start_run(run_name='Logistic Regression Training'):
+    model.fit(X_train, y_train.values.ravel())
+
+    # Evaluate model
+    y_pred = model.predict(X_test)
+    accuracy = accuracy_score(y_test, y_pred)
+    precision = precision_score(y_test, y_pred)
+    recall = recall_score(y_test, y_pred)
+    f1 = f1_score(y_test, y_pred)
+    roc_auc = roc_auc_score(y_test, model.predict_proba(X_test)[:, 1])
+
+    # Log parameters and metrics
     mlflow.log_param('solver', 'lbfgs')
     mlflow.log_param('random_state', 42)
-    mlflow.log_param('max_iter', 5000) # Log the increased max_iter
-
+    mlflow.log_param('max_iter', 5000)
     mlflow.log_metric('accuracy', accuracy)
     mlflow.log_metric('precision', precision)
     mlflow.log_metric('recall', recall)
     mlflow.log_metric('f1', f1)
     mlflow.log_metric('roc_auc', roc_auc)
 
-    # Log the model as an MLflow artifact
-    mlflow.sklearn.log_model(model, 'logistic_regression_model')
+    print('Model training and evaluation completed.')
+    print(f'Accuracy: {accuracy}')
+    print(f'Precision: {precision}')
+    print(f'Recall: {recall}')
+    print(f'F1-score: {f1}')
+    print(f'ROC AUC: {roc_auc}')
 
-print('MLflow logging completed.')
+    # Save the trained model locally
+    os.makedirs('tourism_project/model_building', exist_ok=True)
+    joblib.dump(model, local_model_path)
+    print(f'Model saved locally at {local_model_path}')
 
-
-# --- Save Model and Upload to Hugging Face ---
-local_model_path = 'model_building/logistic_regression_model.joblib'
-joblib.dump(model, local_model_path)
-
-api.upload_file(
-    path_or_fileobj=local_model_path,
-    path_in_repo='logistic_regression_model.joblib',
-    repo_id=repo_id,
-    repo_type='space',
-)
-
-print(f'Model successfully saved locally and uploaded to Hugging Face Space: {repo_id}')
-
-# Upload the scaler as well
-api.upload_file(
-    path_or_fileobj='model_building/scaler.joblib',
-    path_in_repo='scaler.joblib',
-    repo_id=repo_id,
-    repo_type='space',
-)
-print(f'Scaler successfully uploaded to Hugging Face Space: {repo_id}')
+    # Upload the saved model file to the Hugging Face Model Hub
+    api = HfApi(token=os.environ['HF_TOKEN']) # Use environment variable in GitHub Actions
+    api.upload_file(
+        path_or_fileobj=local_model_path,
+        path_in_repo='logistic_regression_model.joblib',
+        repo_id=repo_id,
+        repo_type='space',
+    )
+    print(f'Model uploaded to Hugging Face Model Hub: {repo_id}')
 
 "
+      env:
+        HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        MLFLOW_TRACKING_URI: file:///tmp/mlruns # Log MLflow artifacts locally in the runner
 
-        env:
-          HF_TOKEN: ${{ secrets.HF_TOKEN }} # Use the GitHub Secret
+    - name: Upload MLflow artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: mlflow-artifacts
+        path: /tmp/mlruns
 
-      - name: Make deploy script executable
-        run: |
-          cd tourism_project
-          chmod +x deploy_to_space.sh
-
-      - name: Deploy to Hugging Face Space
-        run: |
-          cd tourism_project
-          ./deploy_to_space.sh
-        env:
-          HF_TOKEN: ${{ secrets.HF_TOKEN }} # Pass the GitHub Secret to the script
+    - name: Deploy Model to Hugging Face Space
+      run: |
+        # This step assumes the Dockerfile, requirements.txt, and app.py are in
+        # tourism_project/model_deployment and the model and X_train.csv
+        # are in the expected locations relative to the Dockerfile's WORKDIR (/app).
+        # The Dockerfile copies these files.
+        # The Hugging Face Space will build the Docker image and run the app.py.
+        # No specific action needed here other than ensuring the files are in the repo
+        # and will be picked up by the Hugging Face Space build process.
+        echo "Deployment files are ready in the repository. Hugging Face Space will handle the build and deployment on push."
