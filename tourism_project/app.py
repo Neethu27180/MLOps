@@ -3,16 +3,40 @@ import pandas as pd
 import joblib
 from huggingface_hub import hf_hub_download
 import os
+from sklearn.preprocessing import StandardScaler # Import StandardScaler for the temporary scaler
+
+# ✅ Fix permissions by redirecting caches
+os.environ["STREAMLIT_HOME"] = os.path.join(os.getcwd(), ".streamlit")
+os.environ["HF_HOME"] = os.path.join(os.getcwd(), ".hf_home")
+os.environ["TRANSFORMERS_CACHE"] = os.path.join(os.getcwd(), ".hf_home", "transformers")
+
+os.makedirs(os.environ["STREAMLIT_HOME"], exist_ok=True)
+os.makedirs(os.environ["HF_HOME"], exist_ok=True)
+os.makedirs(os.environ["TRANSFORMERS_CACHE"], exist_ok=True)
+
 
 # Define the model repository ID and filename on Hugging Face
 repo_id = "Neethu2718/Visit_with_us"
-filename = "logistic_regression_model.joblib"
+model_filename = "logistic_regression_model.joblib"
+scaler_filename = "scaler.joblib" # Define scaler filename
+
+# Define the local directory to download files to
+# Although HF_HOME is set, explicitly defining a local_dir in hf_hub_download is good practice
+download_dir = os.path.join(os.getcwd(), "downloaded_model") # Download within the working directory
+os.makedirs(download_dir, exist_ok=True) # Explicitly create the download directory
 
 # Download the model file from Hugging Face
-model_path = hf_hub_download(repo_id=repo_id, filename=filename, repo_type="space")
+model_path = hf_hub_download(repo_id=repo_id, filename=model_filename, repo_type="space", local_dir=download_dir, local_dir_use_symlinks=False)
 
 # Load the trained model
 model = joblib.load(model_path)
+
+# Download the scaler file from Hugging Face
+scaler_path = hf_hub_download(repo_id=repo_id, filename=scaler_filename, repo_type="space", local_dir=download_dir, local_dir_use_symlinks=False)
+
+# Load the fitted scaler
+scaler = joblib.load(scaler_path)
+
 
 st.title("Wellness Tourism Package Purchase Prediction")
 
@@ -25,7 +49,7 @@ citytier = st.selectbox("City Tier", [1, 2, 3])
 durationofpitch = st.number_input("Duration of Pitch (minutes)", min_value=0.0, value=10.0)
 occupation = st.selectbox("Occupation", ['Salaried', 'Small Business', 'Large Business', 'Free Lancer'])
 gender = st.selectbox("Gender", ['Male', 'Female'])
-numberofpersonvisiting = st.number_input("Number of Persons Visiting", min_value=1, value=1)
+numberofpersonvisiting = st.number_input("NumberOfPersonsVisiting", min_value=1, value=1)
 preferredpropertystar = st.selectbox("Preferred Property Star", [1, 2, 3, 4, 5])
 maritalstatus = st.selectbox("Marital Status", ['Single', 'Married', 'Divorced'])
 numberoftrips = st.number_input("Number of Trips (annually)", min_value=0.0, value=1.0)
@@ -87,7 +111,7 @@ if st.button("Predict"):
     # 'Gender_Female', 'Gender_Male', 'ProductPitched_Deluxe', 'ProductPitched_King',
     # 'ProductPitched_Standard', 'ProductPitched_Super Deluxe', 'MaritalStatus_Married',
     # 'MaritalStatus_Single', 'MaritalStatus_Unmarried', 'Designation_Executive',
-    # 'Designation_Manager', 'Designation_Senior Manager', 'Designation_VP'
+    # 'Designation_Manager', 'Designation_Senior Manager', 'Designation_VP']
 
     # Create a list of the columns that were in X_train after preprocessing
     # This is a placeholder and should be replaced with the actual column names from your trained model's features
@@ -108,11 +132,7 @@ if st.button("Predict"):
     # Ensure the order of columns is the same as during training
     input_data_processed = input_data_processed[training_columns]
 
-    # Apply StandardScaler to numerical columns - use the scaler fitted on training data
-    # In a real application, you would save and load the fitted scaler
-    # For this example, we'll re-fit (not ideal for production) or skip if assuming data is already scaled (not the case here)
-    # A better approach is to use a pipeline that includes scaling and encoding
-    # For demonstration, we'll apply scaling here (assuming numerical columns are the initial ones before encoding)
+    # Apply StandardScaler to numerical columns - use the loaded scaler
     numerical_cols_initial = ['Age', 'CityTier', 'DurationOfPitch', 'NumberOfPersonVisiting',
                               'NumberOfFollowups', 'PreferredPropertyStar', 'NumberOfTrips', 'Passport',
                               'PitchSatisfactionScore', 'OwnCar', 'NumberOfChildrenVisiting', 'MonthlyIncome']
@@ -120,20 +140,8 @@ if st.button("Predict"):
     # Identify the scaled numerical columns in the processed data
     scaled_numerical_cols_processed = [col for col in numerical_cols_initial if col in input_data_processed.columns]
 
-    # Apply scaling - in a real scenario, load a pre-fitted scaler
-    # Here, we'll create a temporary scaler for demonstration - NOT FOR PRODUCTION
-    # You should save the scaler used during training and load it here.
-    try:
-        # Attempt to load a pre-fitted scaler (assuming it was saved)
-        scaler = joblib.load("tourism_project/model_building/scaler.joblib") # Replace with actual path if saved
-        input_data_processed[scaled_numerical_cols_processed] = scaler.transform(input_data_processed[scaled_numerical_cols_processed])
-    except FileNotFoundError:
-        st.warning("Scaler not found. Applying a new scaler for demonstration. In production, use the scaler fitted on training data.")
-        temp_scaler = StandardScaler()
-        # Fit on a dummy dataset with similar distribution or load training data again
-        # For simplicity, fitting on current input (not recommended for production)
-        # A robust solution involves saving the scaler during training
-        input_data_processed[scaled_numerical_cols_processed] = temp_scaler.fit_transform(input_data_processed[scaled_numerical_cols_processed])
+    # Use the loaded scaler to transform the input data
+    input_data_processed[scaled_numerical_cols_processed] = scaler.transform(input_data_processed[scaled_numerical_cols_processed])
 
 
     # Make prediction
